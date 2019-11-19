@@ -14,7 +14,7 @@ Cells are
 
   i n0 n1 n2 1
 
-where i is the cell number, n0 - n2 are the numbers of the vertices, and 1
+where i is the cell number, n0 - n2 are the numbers of the nodes, and 1
 is a 1, don't know what it means.
 
 Nodes (vertices) are
@@ -36,46 +36,54 @@ from pyproj import Transformer
 
 
 def main():
-    pEPSG, pIN, pOUT = sys.argv[1:]
+    pEPSG, pIN, pOUT = sys.argv[1:]  # read 3 command line parameters
+    # a Transformer object that transforms pEPSG coords to 4326 (WGS84)
     trans = Transformer.from_crs(int(pEPSG), 4326, always_xy=True)
-    vertice = []  # nodes
+    node = []  # vertices
     cell = []
-    geojson = {"type": "FeatureCollection", "features": []}
-    in_file = pIN
-    out_file = pOUT
-    with open(in_file) as in_:
+    with open(pIN) as in_:
         nodes_n = next(in_)  # read "Node Number = 5795" line
         nodes_n = int(nodes_n.split()[-1])
         cells_n = next(in_)  # read "Cell Number = 10678" line
         cells_n = int(cells_n.split()[-1])
         for cell_i in range(1, cells_n + 1):  # read cells
-            vals = list(map(float, next(in_).split()))
+            vals = list(map(int, next(in_).split()))  # read 5 ints
             assert vals[0] == cell_i, (vals[0], cell_i)
-            cell.append(list(map(int, vals[1:4])))
+            cell.append(vals[1:4])  # just store the node numbers
         for node_i in range(1, nodes_n + 1):  # read nodes
-            vals = list(map(float, next(in_).split()))
+            vals = list(map(float, next(in_).split()))  # read 4 floats
             assert vals[0] == node_i, (vals[0], node_i)
-            vertice.append(list(trans.transform(*vals[1:3])) + vals[-1:])
-    with open(out_file, 'w') as out:
-        for cell_i, cell in enumerate(cell):
-            coords = []
-            props = {}
-            feature = {
-                "type": "Feature",
-                "geometry": {"type": "Polygon", "coordinates": [coords]},
-                "properties": props,
-            }
-            geojson['features'].append(feature)
-            # first two elements of each vertice
-            coords.extend(vertice[i - 1][:2] for i in cell[:3])
-            # repeat first as last to close poly
-            coords.append(vertice[cell[0] - 1][:2])
-            # last element of each vertice
-            depths = [vertice[i - 1][-1] for i in cell[:3]]
-            props['mindpth'] = min(depths)
-            props['maxdpth'] = max(depths)
-            props['meandpth'] = sum(depths) / len(depths)
-            props['cell_i'] = cell_i + 1
+            # transform the x,y and store x,y,d
+            node.append(list(trans.transform(*vals[1:3])) + vals[-1:])
+
+    # top level of GeoJSON structure
+    geojson = {"type": "FeatureCollection", "features": []}
+    for cell_i, cell in enumerate(cell):
+        # .dat file numbers things from 1, Python numbers things from 0
+        # so cell_i is 1 less than .dat file cell number, and node numbers
+        # are 1 more than Python list indices in node list.
+        coords = []
+        props = {}
+        # make new feature structure and append to features list
+        feature = {
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [coords]},
+            "properties": props,
+        }
+        geojson['features'].append(feature)
+        # x,y are the first two elements of each node
+        coords.extend(node[i - 1][:2] for i in cell[:3])
+        # repeat first as last to close poly
+        coords.append(node[cell[0] - 1][:2])
+        # depth is the last element of each node
+        depths = [node[i - 1][-1] for i in cell[:3]]
+        props['mindpth'] = min(depths)
+        props['maxdpth'] = max(depths)
+        props['meandpth'] = sum(depths) / len(depths)
+        props['cell_i'] = cell_i + 1
+
+    # write the result
+    with open(pOUT, 'w') as out:
         json.dump(geojson, out)
 
 
