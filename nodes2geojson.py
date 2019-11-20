@@ -19,9 +19,9 @@ is a 1, don't know what it means.
 
 Nodes (vertices) are
 
-  i x y d
+  i x y depth
 
-where is is the node number, and x, y, and d are x, y, and depth.
+where is is the node number, and x, y, and depth are x, y, and depth.
 
 The assert statements verify / enforce that the cell and node numbers start at
 one and go up without gaps, if the asserts fail, will need to change code to
@@ -32,33 +32,40 @@ Terry N. Brown terrynbrown@gmail.com Tue Nov 19 03:09:33 UTC 2019
 
 import json
 import sys
+from collections import namedtuple
 from pyproj import Transformer
+
+Node = namedtuple("Node", "num x y depth")
+Cell = namedtuple("Cell", "num n0 n1 n2 one")
 
 
 def main():
     pEPSG, pIN, pOUT = sys.argv[1:]  # read 3 command line parameters
     # a Transformer object that transforms pEPSG coords to 4326 (WGS84)
     trans = Transformer.from_crs(int(pEPSG), 4326, always_xy=True)
-    node = []  # vertices
-    cell = []
+    nodes = []  # vertices
+    cells = []
     with open(pIN) as in_:
-        nodes_n = next(in_)  # read "Node Number = 5795" line
-        nodes_n = int(nodes_n.split()[-1])
-        cells_n = next(in_)  # read "Cell Number = 10678" line
-        cells_n = int(cells_n.split()[-1])
+        nodes_n = int(next(in_).split()[-1])  # read "Node Number = 5795" line
+        cells_n = int(next(in_).split()[-1])  # read "Cell Number = 10678" line
         for cell_i in range(1, cells_n + 1):  # read cells
-            vals = list(map(int, next(in_).split()))  # read 5 ints
-            assert vals[0] == cell_i, (vals[0], cell_i)
-            cell.append(vals[1:4])  # just store the node numbers
+            cells.append(Cell._make(map(int, next(in_).split())))  # 5 ints
+            assert cells[-1].num == cell_i, (cells[-1].num, cell_i)
         for node_i in range(1, nodes_n + 1):  # read nodes
-            vals = list(map(float, next(in_).split()))  # read 4 floats
-            assert vals[0] == node_i, (vals[0], node_i)
-            # transform the x,y and store x,y,d
-            node.append(list(trans.transform(*vals[1:3])) + vals[-1:])
+            node = Node._make(map(float, next(in_).split()))  # read 4 floats
+            assert node.num == node_i, (node.num, node_i)
+            # transform the x,y and store num,x',y',depth
+            nodes.append(
+                Node._make(
+                    [node.num]
+                    + list(trans.transform(node.x, node.y))
+                    + [node.depth]
+                )
+            )
 
     # top level of GeoJSON structure
     geojson = {"type": "FeatureCollection", "features": []}
-    for cell_i, cell in enumerate(cell):
+    for cell_i, cell in enumerate(cells):
         # .dat file numbers things from 1, Python numbers things from 0
         # so cell_i is 1 less than .dat file cell number, and node numbers
         # are 1 more than Python list indices in node list.
@@ -71,12 +78,13 @@ def main():
             "properties": props,
         }
         geojson['features'].append(feature)
-        # x,y are the first two elements of each node
-        coords.extend(node[i - 1][:2] for i in cell[:3])
+        depths = []
         # repeat first as last to close poly
-        coords.append(node[cell[0] - 1][:2])
-        # depth is the last element of each node
-        depths = [node[i - 1][-1] for i in cell[:3]]
+        for corner in cell.n0, cell.n1, cell.n2, cell.n0:
+            coords.append([nodes[corner - 1].x, nodes[corner - 1].y])
+            depths.append(nodes[corner - 1].depth)
+        # first depth got repeated, so
+        del depths[-1]
         props['mindpth'] = min(depths)
         props['maxdpth'] = max(depths)
         props['meandpth'] = sum(depths) / len(depths)
